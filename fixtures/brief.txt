@@ -1,0 +1,1 @@
+Fictional lab: evaluate CSV export tasks. Export all settled transactions with columns id,status,amount. Row order is irrelevant. A grader must accept correct exports and reject empty, missing, malformed, or incorrect exports. Human approval is required for the specification and release.

@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: rl-dataset-review
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/start_server.py
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.3
+      - key: DATABASE_URL
+        sync: false
+      - key: ARTIFACT_ROOT
+        value: /tmp/rl-dataset-review/artifacts
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: STREAMLIT_BROWSER_GATHER_USAGE_STATS
+        value: "false"

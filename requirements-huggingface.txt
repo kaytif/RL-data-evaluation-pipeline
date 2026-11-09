@@ -1,0 +1,3 @@
+# Optional downloader only; the local Streamlit app does not require this.
+datasets>=3,<6
+huggingface_hub>=0.30,<3

@@ -1,0 +1,3 @@
+attempt_id,check_name,expected_result,actual_result,status
+text-attempt-1,invoice_number,INV-1042,,unverified
+text-attempt-2,supplier_name,,ACME,

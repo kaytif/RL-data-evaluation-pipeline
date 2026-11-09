@@ -1,0 +1,5 @@
+attempt_id,check_name,expected_result,actual_result,status
+csv-attempt-1,settled_ids,t1|t3,t1|t3,pass
+csv-attempt-1,row_count,2,2,pass
+csv-attempt-2,settled_ids,t1|t3,t1|t2|t3,fail
+csv-attempt-2,row_count,2,3,fail

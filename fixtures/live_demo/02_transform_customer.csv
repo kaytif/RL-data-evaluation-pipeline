@@ -1,0 +1,3 @@
+attempt_id,check_name,expected_result,actual_result,status
+json-attempt-1,uppercase_name,ALICE,ALICE,pass
+json-attempt-2,uppercase_name,ALICE,alice,fail
