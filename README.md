@@ -4,7 +4,7 @@ An LLM-powered workspace for reviewing reinforcement-learning post-training data
 
 **Deployed app: [rl-data-evaluation-pipeline.onrender.com](https://rl-data-evaluation-pipeline.onrender.com/)**
 
-Hosted on **Render Free**, with **Neon PostgreSQL** for database records. This is an independent portfolio project with no HUD integration or affiliation.
+Hosted on **Render Free**, with **Neon PostgreSQL** for database records. This is an independent portfolio project.
 
 ## What the app does
 
