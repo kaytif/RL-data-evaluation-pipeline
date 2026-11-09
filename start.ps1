@@ -5,6 +5,5 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
-# The local demo deliberately ignores leftover PostgreSQL settings.
-Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
-& "$PSScriptRoot\.venv\Scripts\python.exe" -m streamlit run "$PSScriptRoot\app.py" --server.address 127.0.0.1 --server.port $Port --browser.gatherUsageStats false
+# Respect DATABASE_URL from the shell or the ignored local .env file.
+& "$PSScriptRoot\.venv\Scripts\python.exe" "$PSScriptRoot\scripts\start_local.py" --port $Port

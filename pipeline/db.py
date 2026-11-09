@@ -4,6 +4,9 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from .environment import load_local_environment
+
+load_local_environment()
 
 class Base(DeclarativeBase):
     pass

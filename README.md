@@ -10,7 +10,7 @@ Dependencies are already installed in `.venv`. From this directory run:
 powershell -ExecutionPolicy Bypass -File .\start.ps1
 ```
 
-Open http://127.0.0.1:8502. Keep the terminal open. The launcher clears leftover PostgreSQL settings and uses `acceptance.db` in this directory. SQLite tables are created automatically. No database password, Docker, migration command or model key is needed. There is no login.
+Open http://127.0.0.1:8502. Keep the terminal open. The launcher uses `DATABASE_URL` from the shell or an ignored local `.env` file, and migrates PostgreSQL before startup. If neither specifies a database, it uses `acceptance.db` in this directory and creates SQLite tables automatically. No Docker is required. There is no login.
 
 ## Stage one: enter and save requirements
 

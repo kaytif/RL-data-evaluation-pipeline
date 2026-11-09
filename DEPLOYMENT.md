@@ -17,6 +17,12 @@ a paid disk or Render database. Set `DATABASE_URL` to a Neon PostgreSQL URL (kee
 query parameters). The app normalizes `postgresql://` to the installed `psycopg` driver,
 checks database connections, and applies Alembic migrations before starting Streamlit.
 
+For local Neon use, put `DATABASE_URL=your-connection-string` in the ignored `.env` file
+and run `start.ps1`. The launcher respects that setting and applies migrations. In Render,
+set `DATABASE_URL` in the service's Environment settings instead; the local `.env` is
+deliberately not uploaded. Hosted environment settings always take precedence. Existing
+SQLite data is retained locally and is not automatically copied into Neon.
+
 OpenAI credentials can be entered separately in each browser session. No server API key is
 required to open the app. LLM scoring still requires available API credits.
 

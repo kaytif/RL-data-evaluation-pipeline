@@ -9,6 +9,8 @@ sys.path.insert(0, str(ROOT))
 
 
 def main():
+    from pipeline.environment import load_local_environment
+    load_local_environment()
     database_url = os.getenv('DATABASE_URL', '')
     if not database_url:
         raise SystemExit('Set DATABASE_URL to your Neon PostgreSQL connection URL in Render environment settings.')
