@@ -12,8 +12,8 @@ workspace(1)
 st.title('Upload your dataset')
 st.write('Choose a saved request, then add your task CSV files. Original files are preserved for assessment and review.')
 back, forward = st.columns(2)
-back.page_link('app.py', label='← Requirements', use_container_width=True)
-forward.page_link('pages/3_Assess_tasks.py', label='Continue to assessment →', use_container_width=True)
+back.link_button('Rubric', '/', width='stretch')
+forward.page_link('pages/3_Assess_tasks.py', label='Continue to assessment →', width='stretch')
 factory = sessions()
 with factory() as session:
     requests = list(session.scalars(select(ClientTask).order_by(ClientTask.updated_at.desc())))
@@ -55,7 +55,7 @@ if st.button('Upload task files', type='primary', disabled=not uploads):
         st.success(f'Uploaded {len(uploads):,} task files. Batch ID: {bid}')
         st.session_state['last_csv_batch'] = bid
         st.session_state['assessment_batch'] = bid
-        st.page_link('pages/3_Assess_tasks.py', label='Assess this upload →', use_container_width=True)
+        st.page_link('pages/3_Assess_tasks.py', label='Assess this upload →', width='stretch')
     except ValueError as exc:
         bar.empty()
         st.error(str(exc))

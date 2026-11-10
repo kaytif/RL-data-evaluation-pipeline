@@ -98,16 +98,16 @@ def test_agent_ui_and_export_gate(tmp_path, monkeypatch):
     assert not app.exception
     assert next(m for m in app.metric if m.label == 'Reward 1').value == '1'
     assert next(m for m in app.metric if m.label == 'Reward 0').value == '1'
-    next(w for w in app.selectbox if w.label == 'Filter results').set_value('Reward 0').run()
+    next(w for w in app.selectbox if w.label == 'Filter results').set_value('Incorrect').run()
     assert not app.exception
-    assert any('1 matching attempts' in c.value for c in app.caption)
-    next(w for w in app.selectbox if w.label == 'Filter results').set_value('Needs review').run()
+    assert any('1 of 2 attempts shown' in c.value for c in app.caption)
+    next(w for w in app.selectbox if w.label == 'Filter results').set_value('Unverified').run()
     assert not app.exception
     assert any('No attempts match' in i.value for i in app.info)
     assert next(b for b in app.button if b.label == 'Approve dataset export').disabled
     next(w for w in app.text_input if w.label == 'Reviewer name').set_value('Synthetic reviewer')
     next(w for w in app.text_area if w.label == 'Review rationale').set_value('Reviewed evidence')
-    app.checkbox[0].check().run()
+    next(w for w in app.checkbox if w.label.startswith('I reviewed the task grouping')).check().run()
     next(b for b in app.button if b.label == 'Approve dataset export').click().run()
     assert not app.exception
     assert any('Export approved' in s.value for s in app.success)

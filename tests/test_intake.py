@@ -70,7 +70,7 @@ def test_requirements_form(tmp_path, monkeypatch):
     entrypoint = str(Path(__file__).resolve().parents[1] / 'app.py')
     app = AppTest.from_file(entrypoint, default_timeout=20).run()
     assert not app.exception
-    next(b for b in app.button if b.label == 'Save requirements').click().run()
+    next(b for b in app.button if b.label == 'Save rubric').click().run()
     assert app.error
     next(w for w in app.text_input if w.label == 'Client name *').set_value('Example Lab')
     next(w for w in app.text_input if w.label == 'Task name *').set_value('File processing')
@@ -80,7 +80,7 @@ def test_requirements_form(tmp_path, monkeypatch):
     app.run()
     assert next(m for m in app.metric if m.label == 'Minimum distinct tasks').value == '10'
     assert next(m for m in app.metric if m.label == 'Minimum attempts').value == '40'
-    next(b for b in app.button if b.label == 'Save requirements').click().run()
+    next(b for b in app.button if b.label == 'Save rubric').click().run()
     assert not app.exception
     assert not app.error
     assert app.success
@@ -100,11 +100,10 @@ def test_requirements_form(tmp_path, monkeypatch):
         assert stored['scoring_defaults'] == SCORING_DEFAULTS
 
 
-def test_guide_page(tmp_path, monkeypatch):
+def test_rubric_includes_guide(tmp_path, monkeypatch):
     monkeypatch.setenv('DATABASE_URL', f'sqlite:///{tmp_path / "guide.db"}')
     path = Path(__file__).resolve().parents[1] / 'app.py'
     app = AppTest.from_file(str(path), default_timeout=20).run()
-    app.switch_page('pages/1_Requirements_guide.py').run()
     assert not app.exception
-    assert app.title[0].value == 'Client Requirements Form: RL Post-Training Data'
-    assert len(app.header) == 6
+    assert app.title[0].value == 'Rubric'
+    assert any(e.label == 'Rubric guide' for e in app.expander)

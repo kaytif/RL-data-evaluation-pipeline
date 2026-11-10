@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 import pytest
 from pipeline.llm_assessment import OpenAIJudge, Extraction, Judgment, clean
+from pipeline.evaluation_types import CheckSet
 
 
 def task_file(tmp_path, text):
@@ -32,8 +33,9 @@ def test_independent_reward_not_gold_and_evidence(tmp_path, monkeypatch):
     calls = []
     def call(instructions, payload, output_type):
         calls.append(payload)
-        return extracted() if output_type is Extraction else Judgment(reward=0,
-            reasoning='The response does not provide the required greeting.', evidence='Actual wrong differs from hello.')
+        return extracted() if output_type.__name__ == 'Extraction' else CheckSet(checks=[dict(
+            requirement_id='CRIT-001', applicable=True, status='fail', expected='hello', actual='wrong',
+            reason='The response does not provide the required greeting.', suggested_fix='Supply a separate execution with the correct greeting.')])
     monkeypatch.setattr(judge, 'call', call)
     result = judge.assess_file(task, {})
     assert result.attempts[0].score == 0

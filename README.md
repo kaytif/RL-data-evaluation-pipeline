@@ -14,18 +14,27 @@ Hosted on **Render Free**, with **Neon PostgreSQL** for database records. This i
 - Independently assesses each attempt and returns a **reward of 1 or 0**, concise reasoning, and source-row evidence.
 - Keeps insufficient evidence unverified instead of inventing a reward.
 - Provides result filters, side-by-side task and response inspection, and reviewer-approved CSV/JSONL exports.
+- Reviews the initial instructions for ambiguity, contradictions, missing criteria and unverifiable requirements.
+- Checks category coverage, distinct-task minimums, and the attempt threshold for every individual task.
+- Produces structural data-quality and full readiness reports, followed by a final evaluation report.
+- Evaluates grader agreement on a human-confirmed calibration set, including false passes and false failures.
+- Links actionable remediation findings to source files and rows, and compares corrected uploads without altering originals.
 
 Existing gold labels, rewards, and Jev predictions are withheld from the LLM evaluator. The main interface offers only LLM assessment; it has no rules-based assessment selector or synthetic sample loader.
+
+An assistant can also review a dataset directly in a conversation and import those source-bound judgments. Such runs are explicitly marked **Conversation review**, record zero API calls, preserve the original CSVs, and do not claim human calibration or export approval. They are imported LLM judgments, not a replacement API endpoint: re-running assessment in the app still uses the configured model API.
 
 ## Use the deployed app
 
 1. Open the [live app](https://rl-data-evaluation-pipeline.onrender.com/).
-2. On **Client requirements**, create or select a dataset request, enter its requirements, and save a revision.
-3. Open **Upload submission**, select the request and revision, then upload your task CSV files.
-4. Open **Assess tasks**, select the upload, and expand **Model connection**.
+2. On **Rubric**, create or select a dataset request, complete its rubric, and save a revision.
+3. Open **Upload**, select the request and revision, then upload your task CSV files.
+4. Open **Assessment**, select the upload, and expand **API key & model**.
 5. Enter your OpenAI API key, select a model, and click **Test connection** before running assessment.
-6. Click **Run assessment agent**, then inspect rewards, reasoning, references, and source evidence.
-7. In **Review & export**, enter your reviewer name and rationale and explicitly approve the results before downloading CSV or JSONL.
+6. In **Data quality**, **Inspect data quality** checks structure without a model key; **Check quality & coverage** also reviews the rubric and task evidence.
+7. Optionally open **Model & calibration settings**, review or replace the proposed reference cases, enter a reviewer name, confirm the expected rewards, and evaluate the grader. Proposed labels are not treated as human-confirmed until you confirm them.
+8. Click **Run assessment agent**. The current evaluator also runs or reuses a full readiness review. The assessment has only **Data quality** and **Task coverage** sections. Findings use short summaries; each selected task has a vertical workspace for attempts and check evidence.
+9. In **Review & export**, enter your reviewer name and rationale and explicitly approve results. This enables scored CSV/JSONL, final-report JSON/Markdown, and a separate issues CSV.
 
 Opening the app and saving requirements do not require a model key. LLM assessment requires an OpenAI API key with available credits and model access. The default evaluator is `gpt-4.1-mini`; `OPENAI_MODEL` can override it. Keys entered in the interface stay in the browser session's server-side state and are not written to the database, logs, or artifact cache.
 
@@ -57,7 +66,17 @@ Storage limits are larger than assessment limits. Oversized assessment files mus
 - **0:** The evaluator identifies a demonstrated violation.
 - **Unverified:** Available evidence cannot establish a result, or a file could not be assessed.
 
-These are model judgments, not proof of correctness. The evaluator does not execute uploaded code, run vendor graders, browse external sources, or independently verify external facts. Dataset quantity compliance and default task-package requirements still require separate review; the app does not yet fully enforce every saved requirement at dataset level.
+These are model judgments, not proof of correctness. The evaluator does not execute uploaded code, run vendor graders, browse external sources, or independently verify external facts. It records separate expected/actual evidence and pass/fail/unverified status for each returned applicable completion check; application code derives the reward. Full readiness reviews use the saved capabilities, exclusions, categories, quantities, completion/scoring defaults, scoped additions and other concerns. Ambiguous prose, conflicting scoring changes, missing execution provenance, and requirements needing unavailable verification remain explicit review findings rather than being silently treated as satisfied.
+
+### Evaluation reports and remediation
+
+The **readiness report** separates instruction issues, structural data quality, task-package evidence, category coverage and per-task attempt minimums. Coverage checks one selected file against the saved rubric, with category and attempt thresholds, counts and percentages. Other uploaded files never contribute to that file's coverage. Quality, coverage, rewards, response tables and exported results all use the same selected file. The assessment button processes only that file, and can filter correct, incorrect and unverified attempts. Checking an overall attempt total never substitutes for checking each task. Structural checks identify missing values, malformed JSON, unreadable/oversized files, exact duplicate rows and nonbinary submitted rewards. Duplicate-looking responses are not automatically merged into one execution; absent real execution IDs leave the minimum-execution evidence unverified.
+
+The **final report** keeps three conclusions distinct: dataset compliance, candidate rewards, and grader reliability. A legitimate reward-0 example is not itself a dataset rejection. Reports include reward counts and success rates among verified attempts, verification coverage, category breakdowns, missing evidence and submitted-reward disagreements. Calibration reports measure agreement on the confirmed reference cases only, not universal grader accuracy or downstream training improvement. Case labels and reviewer explanations are withheld from the evaluator.
+
+**Issues & fixes** is a separate linked table, not additional columns written into the original dataset. It lists the requirement, expected and observed values, source file/rows, affected task/attempt, and suggested fix. The assessment page shows concise findings; corrected-upload comparison is not part of the interface.
+
+Reports and reviewed calibration references are stored in existing assessment-job JSON fields, with no new database tables or hosting services. Existing assessments and approvals are preserved; older runs without these reports remain viewable. A newly confirmed calibration set creates a new unapproved assessment report when assessment is run again, using cached model responses where available. The reviewer name is self-attested, consistent with the existing shared-workspace approval flow.
 
 Connection and account failures stop the run rather than assigning fabricated rewards. The app distinguishes recognized billing/quota errors from temporary rate limits and retries temporary rate limits a bounded number of times. Completed model responses are cached for reuse when retrying interrupted work.
 
@@ -111,15 +130,21 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for publishing and hosting details.
 
 | File or module | Responsibility |
 | --- | --- |
-| `app.py` | Client requirements form and saved revisions |
-| `pages/1_Requirements_guide.py` | Requirement definitions and examples |
+| `app.py` | Navigation: Rubric, Upload and Assessment |
+| `app_pages/rubric.py` | Rubric form, saved revisions and inline guide |
 | `pages/2_Upload_submission.py` | Batch CSV uploads and file inspection |
-| `pages/3_Assess_tasks.py` | LLM connection, assessment, review, and export |
+| `pages/3_Assess_tasks.py` | Single-page LLM setup, readiness, assessment, task review, reports, and export |
 | `pipeline/intake.py`, `pipeline/rubric.py` | Requirement validation and persistence |
 | `pipeline/csv_uploads.py` | Original file storage, checksums, and upload records |
 | `pipeline/llm_assessment.py` | LLM extraction, independent grading, API errors, and response caching |
 | `pipeline/assessment_agent.py` | Assessment orchestration, saved results, and call records |
 | `pipeline/agent_dataset.py` | Reviewer approval and dataset exports |
+| `pipeline/evaluation_types.py` | Structured per-requirement checks and reward aggregation |
+| `pipeline/evaluation_reports.py` | Readiness, compliance, quality, final reports and remediation comparisons |
+| `pipeline/calibration.py` | Human-confirmed reference sets and grader agreement metrics |
+| `pipeline/evaluation_ui.py` | Concise quality/coverage findings and optional calibration/export panels |
+| `pipeline/assessment_summary.py` | One-line findings grouped into Data quality and Task coverage |
+| `pipeline/task_review_ui.py` | Compact searchable task/response table with reward filters |
 | `pipeline/db.py`, `pipeline/environment.py` | Database connections and local environment settings |
 | `pipeline/storage.py` | Configurable artifact directory |
 | `migrations/` | Alembic database schema migrations |

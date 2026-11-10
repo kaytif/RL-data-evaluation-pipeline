@@ -28,7 +28,8 @@ def export_dataset(session, job_id, format='csv'):
         return '\n'.join(json.dumps({**row.result, **metadata}) for row in rows).encode()
     out = io.StringIO(newline='')
     fields = ['assessment_id', 'batch_id', 'task_id', 'attempt_id', 'source_attempt_id', 'source_file',
-              'score', 'status', 'reasoning', 'evidence', 'task_review_notes', 'source_task', 'candidate_response', 'adapter', 'approved_by']
+              'score', 'status', 'reasoning', 'evidence', 'task_review_notes', 'source_task', 'candidate_response',
+              'source_task_key', 'category', 'execution_id', 'grouping_basis', 'reported_reward', 'reported_reward_conflict', 'check_fixes', 'adapter', 'approved_by']
     writer = csv.DictWriter(out, fields)
     writer.writeheader()
     for row in rows:
@@ -37,5 +38,6 @@ def export_dataset(session, job_id, format='csv'):
         result['evidence'] = json.dumps(result['evidence'])
         result['source_task'] = json.dumps(result.get('source_task'))
         result['task_review_notes'] = json.dumps(result.get('task_review_notes', []))
+        result['check_fixes'] = json.dumps(result.get('check_fixes', {}))
         writer.writerow(result)
     return out.getvalue().encode('utf-8-sig')

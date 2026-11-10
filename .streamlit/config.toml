@@ -2,8 +2,21 @@
 maxUploadSize = 50
 
 [theme]
+base = "light"
 primaryColor = "#23735B"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F3F6F5"
+backgroundColor = "#FAFCFB"
+secondaryBackgroundColor = "#EDF4F1"
 textColor = "#192D28"
 font = "sans serif"
+borderColor = "#D8E4DE"
+baseRadius = "12px"
+buttonRadius = "8px"
+paddingTop = "2rem"
+paddingBottom = "4rem"
+showSidebarBorder = true
+
+[theme.sidebar]
+backgroundColor = "#EEF4F1"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#192D28"
+primaryColor = "#23735B"
