@@ -266,12 +266,14 @@ def test_llm_ui_shows_reports_and_retains_export_approval(tmp_path, monkeypatch)
     next(b for b in app.button if b.label == 'Run assessment agent').click().run()
     assert not app.exception
     assert not app.tabs
-    assert [h.value for h in app.header] == ['Data quality', 'Task coverage']
+    assert [h.value for h in app.header] == ['Data quality', 'Task coverage', 'Rewards']
     assert any(s.value == 'Task workspace' for s in app.subheader)
     assert any('Response' in frame.value.columns for frame in app.dataframe)
     assert not any(s.value.startswith('Attempt ') for s in app.subheader)
     assert next(m for m in app.metric if m.label == 'Reward 1').value == '1'
+    assert next(m for m in app.metric if m.label == 'Success rate (reward 1)').value == '50.0%'
     assert next(m for m in app.metric if m.label == 'Reward 0').value == '1'
+    assert next(m for m in app.metric if m.label == 'Failure rate (reward 0)').value == '50.0%'
     assert next(b for b in app.button if b.label == 'Approve dataset export').disabled
     assert not any(b.proto.label == 'Download final report JSON' for b in app.get('download_button'))
     next(w for w in app.text_input if w.label == 'Reviewer name').set_value('Reviewer')
@@ -513,11 +515,13 @@ def test_assessment_runs_only_one_selected_file_and_ui_never_combines_rewards(tm
     assert not app.exception
     assert next(m for m in app.metric if m.label == 'Attempts').value == '1'
     assert next(m for m in app.metric if m.label == 'Reward 1').value == '1'
+    assert next(m for m in app.metric if m.label == 'Success rate (reward 1)').value == '100.0%'
     table = next(f.value for f in app.dataframe if 'Response' in f.value.columns)
     assert len(table) == 1 and table.iloc[0]['File'] == 'correct.csv'
     next(w for w in app.selectbox if w.label == 'Assessment file').select(files[1].id).run()
     assert not app.exception
     assert next(m for m in app.metric if m.label == 'Reward 1').value == '0'
     assert next(m for m in app.metric if m.label == 'Reward 0').value == '1'
+    assert next(m for m in app.metric if m.label == 'Failure rate (reward 0)').value == '100.0%'
     table = next(f.value for f in app.dataframe if 'Response' in f.value.columns)
     assert len(table) == 1 and table.iloc[0]['File'] == 'incorrect.csv'

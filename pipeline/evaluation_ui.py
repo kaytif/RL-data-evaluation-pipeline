@@ -245,6 +245,7 @@ def render_file_coverage(factory, batch_id, blueprint, job, api_key, model, read
     scoped = [c for c in (source or {}).get('checks', []) if c['phase'] == 'Task completion' and
               (c.get('source_file_id') == chosen or (not c.get('source_file_id') and not ambiguous and c.get('source_file') == file.filename))]
     report_table(checks + scoped, 'coverage_' + batch_id + chosen, section='Task coverage')
+    return dict(rows=rows, complete=complete)
 
 
 def coverage_rows(blueprint, inventory, complete):

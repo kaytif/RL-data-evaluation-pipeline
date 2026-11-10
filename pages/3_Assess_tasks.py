@@ -7,7 +7,7 @@ from pipeline.db import sessions
 from pipeline.models import Client, ClientTask, ClientTaskRevision
 from pipeline.csv_uploads import TaskUploadBatch, UploadedTaskCSV
 from pipeline.assessment_agent import AssessmentJob, AssessedAttempt, AssessmentToolCall, run_agent, llm_job_filter
-from pipeline.agent_dataset import approve_dataset, export_dataset
+from pipeline.agent_dataset import approve_dataset, export_dataset, export_scored_source_csv
 from pipeline.ui import workspace
 from pipeline import llm_assessment
 from pipeline.evaluation_ui import render_quality_review, render_calibration, render_file_coverage
@@ -27,7 +27,7 @@ if isinstance(llm_assessment.OpenAIJudge, type) and (
 st.set_page_config(page_title='Assessment', layout='wide')
 workspace(2)
 st.title('Assessment')
-st.caption('Data quality and task coverage.')
+st.caption('Review purpose, data quality, task coverage and rewards for one selected file.')
 st.page_link('pages/2_Upload_submission.py', label='Back to upload')
 factory = sessions()
 with factory() as session:
@@ -127,9 +127,20 @@ st.header('Data quality', divider='blue')
 checks = render_quality_review(factory, bid, api_key, model, ready, job.summary.get('report') if job else None, file_id=file_id)
 
 st.header('Task coverage', divider='green')
-render_file_coverage(factory, bid, blueprint, job, api_key, model, ready, file_id=file_id)
+coverage = render_file_coverage(factory, bid, blueprint, job, api_key, model, ready, file_id=file_id)
+from pipeline.reward_review import quick_report, reward_statistics
+with factory() as session:
+    results = list(session.scalars(select(AssessedAttempt).where(
+        AssessedAttempt.job_id == job.id, AssessedAttempt.task_id == file_id))) if job else []
+result_data = [a.result for a in results]
+short_report = quick_report(blueprint, checks, coverage, reward_statistics(result_data))
+st.subheader('Quick report')
+for line in short_report.splitlines():
+    label, text = line.split(': ', 1)
+    st.write(f'**{label}:** {text}')
+st.header('Rewards', divider='orange')
 if not job:
-    st.caption('Run an assessment to see rewards and individual task results.')
+    st.info('Click Run assessment agent to assign 0/1 rewards and reasoning to this file. Data-quality checks alone do not grade answers.')
     st.stop()
 if job.summary.get('file_errors') == job.summary.get('tasks'):
     st.error('Assessment did not complete; no rewards were assigned.')
@@ -139,9 +150,6 @@ if job.summary.get('file_errors') == job.summary.get('tasks'):
         from pipeline.assessment_summary import one_line
         st.caption(one_line(failed_call.payload.get('error')))
     st.stop()
-st.subheader('Rewards')
-with factory() as session:
-    results = list(session.scalars(select(AssessedAttempt).where(AssessedAttempt.job_id == job.id, AssessedAttempt.task_id == file_id)))
 counts = dict(attempts=len(results), success=sum(a.result['score'] == 1 for a in results),
               failure=sum(a.result['score'] == 0 for a in results), unverified=sum(a.result['score'] is None for a in results))
 for col, key, label in zip(st.columns(4), ['attempts', 'success', 'failure', 'unverified'],
@@ -151,7 +159,9 @@ for col, key, label in zip(st.columns(4), ['attempts', 'success', 'failure', 'un
     col.metric(label, f'{count:,}', border=True)
     col.caption(f'{count / total:.1%} of {total:,} attempts' if total else 'No attempts')
 st.caption('Rewards describe answers; coverage describes dataset completeness.')
+from pipeline.reward_ui import render_reward_results
 render_task_review(factory, job, file_id=file_id)
+render_reward_results(factory, job, file_map[file_id], result_data, api_key, model, ready)
 report_for_export = job.summary.get('report')
 issues_for_export = report_for_export.get('issues', []) if report_for_export else None
 with st.expander('Review & export'):
@@ -171,6 +181,14 @@ with st.expander('Review & export'):
                     st.error(str(exc))
         else:
             st.success(f"Export approved by {job.approval['actor']}")
+            try:
+                with factory() as session:
+                    enriched_csv = export_scored_source_csv(session, jid, file_id)
+                st.download_button('Download original CSV + rewards & reasoning', enriched_csv,
+                    f'{Path(file_map[file_id].filename).stem}-with-rewards.csv', 'text/csv', width='stretch')
+            except ValueError as exc:
+                st.error(str(exc))
+            st.download_button('Download quick report', short_report, f'{jid}-quick-report.txt', 'text/plain')
             with factory() as session:
                 csv_data = export_dataset(session, jid)
                 jsonl_data = export_dataset(session, jid, 'jsonl')
