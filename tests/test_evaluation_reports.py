@@ -345,6 +345,70 @@ def test_file_coverage_never_combines_tasks_or_attempts():
     assert next(c for c in checks if c['requirement_id'] == 'QTY-001')['status'] == 'unverified'
 
 
+def test_explicit_vocabulary_file_counts_50_definitions_and_50_opposites(tmp_path):
+    from pipeline.evaluation_reports import explicit_file_inventory
+    from pipeline.evaluation_ui import coverage_rows
+    raw = b'task_id,task_type,prompt,answer\n' + b''.join(
+        f'{category}-{i},{category},Question {i},Response\n'.encode()
+        for category in ('definitions', 'opposites') for i in range(50))
+    path = tmp_path / 'vocabulary.csv'
+    path.write_bytes(raw)
+    file = SimpleNamespace(id='selected', filename=path.name, path=str(path), sha256=hashlib.sha256(raw).hexdigest())
+    rubric = {'quantities': [dict(category=c, minimum_tasks=50, attempts_per_task=1)
+                             for c in ('definitions', 'opposites')]}
+    inventory, complete = explicit_file_inventory(file, rubric)
+    rows = coverage_rows(rubric, inventory, complete)
+    assert complete
+    assert [r['Distinct tasks'] for r in rows] == [50, 50]
+    assert [r['Coverage'] for r in rows] == ['100.0%', '100.0%']
+    assert all(r['Tasks meeting attempt minimum'] == 0 for r in rows)
+
+
+def test_structural_coverage_counts_only_selected_file_and_rejects_batch_fallback(tmp_path, monkeypatch):
+    from pipeline.csv_uploads import TaskUploadBatch, UploadedTaskCSV, save_csv_batch
+    from test_assessment_agent import File
+    from streamlit.testing.v1 import AppTest
+    url, factory, original = setup(tmp_path, DATA)
+    # Same filename and task ID across files must still remain separate.
+    one = File(b'task_id,task_type,prompt,answer\nsame,CSV,Say hello,hello\n')
+    two = File(b'task_id,task_type,prompt,answer\nsame,CSV,Say hi,hi\nsecond,CSV,Say bye,bye\n')
+    with factory.begin() as session:
+        rid = session.get(TaskUploadBatch, original).requirement_revision_id
+        bid = save_csv_batch(session, rid, [one, two], 'explicit-files', tmp_path / 'explicit')
+        files = list(session.scalars(select(UploadedTaskCSV).where(UploadedTaskCSV.batch_id == bid).order_by(UploadedTaskCSV.id)))
+        for file in files:
+            jid = run_readiness(session, bid, file_id=file.id)
+            report = session.get(AssessmentJob, jid).summary['report']
+            assert {r['source_file_id'] for r in report['inventory']} == {file.id}
+            assert len(report['inventory']) == file.row_count - 1
+            assert report['inventoried_file_ids'] == [file.id]
+            assert all(c['status'] != 'pass' for c in report['checks']
+                       if c['requirement_id'] == 'ATTEMPTS-PER-TASK')
+        # A legacy upload-wide semantic report cannot override file-local counts.
+        legacy_id = run_readiness(session, bid)
+        legacy = session.get(AssessmentJob, legacy_id)
+        legacy.summary = {**legacy.summary, 'report': {**legacy.summary['report'], 'llm_reviewed': True}}
+    monkeypatch.setenv('DATABASE_URL', url)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py'), default_timeout=30).run()
+    app.switch_page('pages/3_Assess_tasks.py').run()
+    next(w for w in app.selectbox if w.label == 'Dataset upload').select(bid).run()
+    for file in files:
+        next(w for w in app.selectbox if w.label == 'Assessment file').select(file.id).run()
+        assert not app.exception
+        table = next(f.value for f in app.dataframe if 'Distinct tasks' in f.value.columns)
+        assert table.iloc[0]['Distinct tasks'] == file.row_count - 1
+    # Without a file report, never substitute the legacy upload-wide report.
+    with factory.begin() as session:
+        reports = list(session.scalars(select(AssessmentJob).where(AssessmentJob.batch_id == bid)))
+        for report in reports:
+            if report.summary.get('source_file_id') == files[-1].id:
+                session.delete(report)
+    app.run()
+    assert next(m for m in app.metric if m.label == 'Task coverage').value == 'Unverified'
+    table = next(f.value for f in app.dataframe if 'Distinct tasks' in f.value.columns)
+    assert table.iloc[0]['Distinct tasks'] == 0
+
+
 def test_assessment_runs_only_one_selected_file_and_ui_never_combines_rewards(tmp_path, monkeypatch):
     from pipeline.csv_uploads import TaskUploadBatch, UploadedTaskCSV, save_csv_batch
     from test_assessment_agent import File

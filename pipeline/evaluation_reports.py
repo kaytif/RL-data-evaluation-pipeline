@@ -12,7 +12,7 @@ from .models import ClientTaskRevision
 from .evaluation_types import CheckSet, requirements, package_requirements, validate_checks
 from .intake import new_id
 
-REPORT_VERSION = 3
+REPORT_VERSION = 4
 
 
 def check(code, phase, status, expected, observed, issue, fix='', *, filename='', rows=(), task='', attempt='', scope='dataset'):
@@ -188,6 +188,33 @@ def file_quantity_checks(blueprint, inventory, filename, file_id=None, complete=
     return scoped
 
 
+def explicit_file_inventory(file, blueprint):
+    """Count declared tasks in one validated CSV without inferring model judgments."""
+    import io
+    raw = Path(file.path).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != file.sha256:
+        raise ValueError('Original file checksum differs from the uploaded record.')
+    reader = csv.DictReader(io.StringIO(raw.decode('utf-8-sig')), strict=True)
+    headers = reader.fieldnames or []
+    category_column = next((name for name in ('task_type', 'category') if name in headers), None)
+    if 'task_id' not in headers or category_column is None:
+        return [], False
+    allowed = {q['category'] for q in blueprint.get('quantities', [])}
+    inventory, complete = [], True
+    for n, row in enumerate(reader, 2):
+        key = row['task_id'].strip()
+        category = row[category_column].strip()
+        if not key or category not in allowed:
+            complete = False
+        execution = next((row.get(name, '').strip() for name in
+            ('execution_id', 'attempt_id', 'run_id', 'trial_id') if row.get(name, '').strip()), None)
+        inventory.append(dict(task_key=key or f'missing-task-row-{n}', category=category if category in allowed else None,
+            execution_id=execution, source_file=file.filename, source_file_id=file.id, source_rows=[n],
+            candidate_hash=hashlib.sha256(row.get('answer', row.get('candidate_response', '')).encode()).hexdigest(),
+            task_hash=hashlib.sha256(row.get('prompt', row.get('instructions', '')).encode()).hexdigest()))
+    return inventory, complete and bool(inventory)
+
+
 def run_readiness(session, batch_id, judge=None, progress=None, file_id=None):
     batch, blueprint, files = load_batch(session, batch_id)
     if file_id:
@@ -267,6 +294,15 @@ def run_readiness(session, batch_id, judge=None, progress=None, file_id=None):
         for file in files:
             checks += file_quantity_checks(blueprint, inventory, file.filename, file.id, complete=file.id in inventoried_files)
     else:
+        for file in files:
+            if any(c['requirement_id'] == 'FILE-READABLE' and c['status'] == 'fail'
+                   and c['source_file'] == file.filename for c in checks):
+                continue
+            records, complete = explicit_file_inventory(file, blueprint)
+            inventory.extend(records)
+            if complete:
+                inventoried_files.add(file.id)
+            checks += file_quantity_checks(blueprint, records, file.filename, file.id, complete=complete)
         checks.append(check('SEMANTIC-PENDING', 'Instructions', 'unverified', 'LLM instruction and task-package review',
             'Not run', 'Only structural checks have run.', 'Connect the evaluator and run readiness review.'))
     report = make_report('readiness', checks, quality=quality, inventory=inventory,

@@ -208,22 +208,20 @@ def render_file_coverage(factory, batch_id, blueprint, job, api_key, model, read
         except (ValueError, RuntimeError) as exc:
             st.error(str(exc))
     source = next((j.summary['report'] for j in saved if j.summary['report'].get('source_file_id') == chosen and j.summary['report'].get('llm_reviewed')), None)
-    if source is None and job:
+    if source is None and job and job.summary.get('source_file_id') == chosen:
         linked = (job.summary.get('report') or {}).get('readiness_id')
         if linked:
             with factory() as session:
                 linked_job = session.get(AssessmentJob, linked)
-                if linked_job:
-                    source = linked_job.summary.get('report')
-    source = source or next((j.summary['report'] for j in saved if j.summary['report'].get('llm_reviewed') and not j.summary['report'].get('source_file_id')), None)
+                if linked_job and linked_job.summary.get('report', {}).get('source_file_id') == chosen:
+                    source = linked_job.summary['report']
+    source = source or next((j.summary['report'] for j in saved
+        if j.summary['report'].get('source_file_id') == chosen), None)
     inventory = (source or {}).get('inventory', [])
     ambiguous = names[file.filename] > 1
-    relevant = [r for r in inventory if r.get('source_file_id') == chosen or
-                (not r.get('source_file_id') and not ambiguous and r.get('source_file') == file.filename)]
+    relevant = [r for r in inventory if r.get('source_file_id') == chosen]
     complete = chosen in (source or {}).get('inventoried_file_ids', [])
-    if source and source.get('version', 0) < 3 and relevant:
-        complete = not any(c['requirement_id'] in ('EXTRACTION', 'FILE-READABLE') and c['status'] != 'pass' and c['source_file'] == file.filename for c in source['checks'])
-    checks = file_quantity_checks(blueprint, inventory, file.filename, chosen, complete=complete, ambiguous_filename=ambiguous)
+    checks = file_quantity_checks(blueprint, relevant, file.filename, chosen, complete=complete, ambiguous_filename=ambiguous)
     rows = coverage_rows(blueprint, relevant, complete)
     required = sum(r['Required tasks'] for r in rows)
     found = sum(r['Distinct tasks'] for r in rows)

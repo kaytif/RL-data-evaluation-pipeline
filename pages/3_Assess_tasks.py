@@ -56,7 +56,10 @@ blueprint = revision.snapshot
 with factory() as session:
     files = list(session.scalars(select(UploadedTaskCSV).where(UploadedTaskCSV.batch_id == bid).order_by(UploadedTaskCSV.filename, UploadedTaskCSV.id)))
 file_map = {file.id: file for file in files}
-file_id = st.selectbox('Assessment file', list(file_map), format_func=lambda key: file_map[key].filename, key='assessment_file_' + bid)
+from collections import Counter
+filename_counts = Counter(file.filename for file in files)
+file_labels = {file.id: file.filename + (f' ({file.id})' if filename_counts[file.filename] > 1 else '') for file in files}
+file_id = st.selectbox('Assessment file', list(file_map), format_func=file_labels.get, key='assessment_file_' + bid)
 st.caption('Quality, coverage, rewards and responses below apply only to this file.')
 st.caption(f'{batch.file_count:,} task files | Requirements revision {revision.revision} | Uploaded {batch.created_at[:10]}')
 with st.expander('Rubric'):
