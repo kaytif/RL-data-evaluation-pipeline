@@ -34,6 +34,8 @@ def test_thousands_of_arbitrary_csvs(tmp_path):
         rows = list(s.scalars(select(UploadedTaskCSV)))
         assert len({r.id for r in rows}) == 2001
         for r in rows:
+            # SQLite does not enforce VARCHAR lengths; PostgreSQL does.
+            assert len(r.id) <= UploadedTaskCSV.__table__.c.id.type.length
             assert Path(r.path).resolve().is_relative_to(root.resolve())
         assert rows[0].row_count == 2
         assert Path(rows[0].path).read_bytes() == uploads[0].getvalue()

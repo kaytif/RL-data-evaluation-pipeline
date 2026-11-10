@@ -59,7 +59,8 @@ def save_csv_batch(session, revision_id, uploads, request_key, artifact_root=Non
             name = str(upload.name)
             if Path(name).suffix.lower() != '.csv':
                 raise ValueError(f'{name}: only CSV files are supported.')
-            task_id = new_id('DATA-TASK')
+            # Keep the full UUID within the 40-character primary/foreign keys.
+            task_id = new_id('DATA')
             target = directory / f'{task_id}.csv'
             digest = hashlib.sha256(); size = 0
             upload.seek(0)
