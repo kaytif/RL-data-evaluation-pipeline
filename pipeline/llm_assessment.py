@@ -62,8 +62,11 @@ relevant criteria. Preserve full task context, candidate response and reference 
 summarizing away evidence. source_rows must be exact supplied CSV row numbers. Never invent
 missing tasks, candidates or references. Unidentifiable rows go in notes, not invented attempts.'''
 EXTRACT += ''' Preserve original explicit task and execution IDs in source_task_id and
-source_attempt_id; use null when absent, never invent IDs. Assign one permitted category
-from the supplied quantities only when the task supports it; otherwise use null. Identical
+source_attempt_id; use null when absent, never invent IDs. Preserve an explicit source
+category even when it is absent from the rubric. Otherwise identify the task's actual
+category from its evidence, using null when unclear. The rubric is a comparison target,
+not a description of what the file must contain. Never invent or regroup tasks or attempts
+to match its target quantities. Identical
 answers from separate execution IDs or separate response rows remain separate attempts.
 Multiple check rows for ONE explicit execution belong together. Without execution IDs,
 preserve separate response rows rather than deduplicating identical answers. For a single
@@ -80,8 +83,8 @@ Mark unverifiable graders unverified, not passed. Missing required packaging can
 external or unavailable verification stays unverified. Mandatory rules always apply.
 For scoped rules, apply only the assigned category; unknown applicability is unverified.
 Never infer that graders or references exist merely from reported labels or rewards.'''
-EXTRACT += ''' Dataset-wide totals and distributions must not be judged against a single
-file. Mark a package requirement unverified if it needs unavailable aggregate evidence.
+EXTRACT += ''' Quantity comparisons are computed separately by the application using only
+this selected file. Never assume other files supply missing tasks or attempts.
 For an explicit task ID, do not merge different task versions or different instructions.
 Source execution IDs identify executions, not the spelling of candidate responses.'''
 EXTRACT += ''' Decompose task success into separate applicable criteria, such as content
@@ -378,9 +381,6 @@ class OpenAIJudge:
             for source_id in (item.source_attempt_id, item.source_task_id):
                 if source_id is not None and source_id not in source_text:
                     raise ValueError('Extracted execution/task ID is not present in the cited source rows.')
-            categories = {q['category'] for q in blueprint.get('quantities', [])}
-            if item.category is not None and item.category not in categories:
-                raise ValueError('Extracted category is outside the permitted client categories.')
             execution = item.source_attempt_id or ','.join(map(str, sorted(item.source_rows)))
             aid = hashlib.sha256((task.id + item.task + execution).encode()).hexdigest()[:24]
             if aid in seen:

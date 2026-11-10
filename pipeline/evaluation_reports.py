@@ -12,7 +12,7 @@ from .models import ClientTaskRevision
 from .evaluation_types import CheckSet, requirements, package_requirements, validate_checks
 from .intake import new_id
 
-REPORT_VERSION = 4
+REPORT_VERSION = 5
 
 
 def check(code, phase, status, expected, observed, issue, fix='', *, filename='', rows=(), task='', attempt='', scope='dataset'):
@@ -118,6 +118,19 @@ def quality_checks(files):
     return checks, summary
 
 
+def category_policy(blueprint, category):
+    """Match labels for comparison while preserving the observed source label."""
+    if not category:
+        return None
+    policies = blueprint.get('quantities', [])
+    exact = [q for q in policies if q['category'].strip().casefold() == category.strip().casefold()]
+    if len(exact) == 1:
+        return exact[0]
+    normalized = category.strip().casefold().removesuffix('s')
+    matches = [q for q in policies if q['category'].strip().casefold().removesuffix('s') == normalized]
+    return matches[0] if len(matches) == 1 else None
+
+
 def quantity_checks(blueprint, inventory, complete=True):
     checks, tasks = [], defaultdict(list)
     executions = defaultdict(set)
@@ -140,12 +153,13 @@ def quantity_checks(blueprint, inventory, complete=True):
                 'Confirm the task IDs and versions; do not merge unrelated task contexts.', task=key))
         categories = {r['category'] for r in records}
         category = next(iter(categories)) if len(categories) == 1 and None not in categories else None
+        policy = category_policy(blueprint, category)
         if category is None:
             uncertain_categories = True
-        else:
-            counts[category] += 1
+        elif policy:
+            counts[policy['category']] += 1
         files = sorted({r['source_file'] for r in records})
-        checks.append(check('CAT-001', 'Task coverage', 'pass' if category else 'unverified', 'Exactly one permitted category per distinct task',
+        checks.append(check('CAT-001', 'Task coverage', 'pass' if policy else 'fail' if category else 'unverified', 'Exactly one permitted category per distinct task',
             category or 'Category is unknown or inconsistent', 'Category identified.' if category else 'Cannot reliably assign this task to a category.',
             '' if category else 'Clarify the category and task instructions in a corrected upload.', filename='; '.join(files), task=key))
         unique_attempts = set()
@@ -156,7 +170,6 @@ def quantity_checks(blueprint, inventory, complete=True):
             else:
                 inferred = True
                 unique_attempts.add(('inferred', r['source_file'], tuple(r['source_rows'])))
-        policy = next((q for q in blueprint.get('quantities', []) if q['category'] == category), None)
         minimum = policy['attempts_per_task'] if policy else None
         status = 'unverified' if minimum is None else ('fail' if complete else 'unverified') if len(unique_attempts) < minimum else 'unverified' if inferred else 'pass'
         checks.append(check('ATTEMPTS-PER-TASK', 'Attempt coverage', status, minimum if minimum else 'A minimum for the assigned category',
@@ -199,16 +212,15 @@ def explicit_file_inventory(file, blueprint):
     category_column = next((name for name in ('task_type', 'category') if name in headers), None)
     if 'task_id' not in headers or category_column is None:
         return [], False
-    allowed = {q['category'] for q in blueprint.get('quantities', [])}
     inventory, complete = [], True
     for n, row in enumerate(reader, 2):
         key = row['task_id'].strip()
         category = row[category_column].strip()
-        if not key or category not in allowed:
+        if not key or not category:
             complete = False
         execution = next((row.get(name, '').strip() for name in
             ('execution_id', 'attempt_id', 'run_id', 'trial_id') if row.get(name, '').strip()), None)
-        inventory.append(dict(task_key=key or f'missing-task-row-{n}', category=category if category in allowed else None,
+        inventory.append(dict(task_key=key or f'missing-task-row-{n}', category=category or None,
             execution_id=execution, source_file=file.filename, source_file_id=file.id, source_rows=[n],
             candidate_hash=hashlib.sha256(row.get('answer', row.get('candidate_response', '')).encode()).hexdigest(),
             task_hash=hashlib.sha256(row.get('prompt', row.get('instructions', '')).encode()).hexdigest()))
@@ -249,7 +261,7 @@ def run_readiness(session, batch_id, judge=None, progress=None, file_id=None):
                     if not set(item.source_rows) <= {r['source_row'] for r in rows}:
                         raise ValueError('Extraction cited nonexistent source rows.')
                     covered.update(item.source_rows)
-                    category = item.category if item.category in {q['category'] for q in blueprint.get('quantities', [])} else None
+                    category = item.category
                     key = item.source_task_id or hashlib.sha256(' '.join(item.task.split()).encode()).hexdigest()
                     record = dict(task_key=key, category=category, execution_id=item.source_attempt_id,
                         source_file=file.filename, source_file_id=file.id, source_rows=item.source_rows,
@@ -292,6 +304,14 @@ def run_readiness(session, batch_id, judge=None, progress=None, file_id=None):
             if progress:
                 progress(index + 1, len(files))
         for file in files:
+            # Explicit source IDs/categories remain authoritative for counts even
+            # when a model's package review cannot establish semantic compliance.
+            if not any(c['requirement_id'] == 'FILE-READABLE' and c['status'] == 'fail'
+                       and c['source_file'] == file.filename for c in checks):
+                records, complete = explicit_file_inventory(file, blueprint)
+                if complete:
+                    inventory = [r for r in inventory if r.get('source_file_id') != file.id] + records
+                    inventoried_files.add(file.id)
             checks += file_quantity_checks(blueprint, inventory, file.filename, file.id, complete=file.id in inventoried_files)
     else:
         for file in files:

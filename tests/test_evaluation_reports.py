@@ -362,6 +362,78 @@ def test_explicit_vocabulary_file_counts_50_definitions_and_50_opposites(tmp_pat
     assert [r['Distinct tasks'] for r in rows] == [50, 50]
     assert [r['Coverage'] for r in rows] == ['100.0%', '100.0%']
     assert all(r['Tasks meeting attempt minimum'] == 0 for r in rows)
+    # The user's actual rubric is an ideal target, not the file's grouping.
+    target = {'quantities': [dict(category=c, minimum_tasks=1, attempts_per_task=50)
+                             for c in ('Definition', 'Opposites')]}
+    actual, complete = explicit_file_inventory(file, target)
+    assert actual == inventory
+    assert complete
+    rows = coverage_rows(target, actual, complete)
+    assert [r['Distinct tasks'] for r in rows] == [50, 50]
+    assert [r['Required tasks'] for r in rows] == [1, 1]
+    assert [r['Observed attempts per task'] for r in rows] == ['1', '1']
+    assert [r['Required attempts per task'] for r in rows] == [50, 50]
+    checks = quantity_checks(target, actual)
+    assert all(c['status'] == 'fail' for c in checks if c['requirement_id'] == 'ATTEMPTS-PER-TASK')
+    assert {r['category'] for r in actual} == {'definitions', 'opposites'}
+
+
+def test_categories_outside_rubric_remain_visible_and_do_not_satisfy_its_targets(tmp_path):
+    from pipeline.evaluation_reports import explicit_file_inventory
+    from pipeline.evaluation_ui import coverage_rows
+    raw = b'task_id,task_type,prompt,answer\nT1,translation,Translate hello,hola\n'
+    path = tmp_path / 'translation.csv'
+    path.write_bytes(raw)
+    file = SimpleNamespace(id='selected', filename=path.name, path=str(path), sha256=hashlib.sha256(raw).hexdigest())
+    target = {'quantities': [dict(category='definitions', minimum_tasks=50, attempts_per_task=1)]}
+    inventory, complete = explicit_file_inventory(file, target)
+    assert complete and inventory[0]['category'] == 'translation'
+    rows = coverage_rows(target, inventory, complete)
+    assert rows[0]['Distinct tasks'] == 0
+    assert rows[1]['Category'] == 'translation' and rows[1]['Distinct tasks'] == 1
+    assert rows[1]['Coverage'] == 'No rubric target'
+    checks = quantity_checks(target, inventory)
+    assert next(c for c in checks if c['requirement_id'] == 'QTY-001')['status'] == 'fail'
+    assert next(c for c in checks if c['requirement_id'] == 'CAT-001')['status'] == 'fail'
+
+
+def test_selected_file_ui_separates_actual_counts_from_ideal_rubric(tmp_path, monkeypatch):
+    from pipeline.csv_uploads import TaskUploadBatch, UploadedTaskCSV
+    from pipeline.models import ClientTaskRevision
+    from streamlit.testing.v1 import AppTest
+    raw = b'task_id,task_type,prompt,answer\n' + b''.join(
+        f'{c}-{i},{c},Question {i},Response\n'.encode()
+        for c in ('definitions', 'opposites') for i in range(50))
+    url, factory, bid = setup(tmp_path, raw)
+    with factory.begin() as session:
+        revision = session.get(ClientTaskRevision, session.get(TaskUploadBatch, bid).requirement_revision_id)
+        revision.snapshot = {**revision.snapshot, 'quantities': [
+            dict(category=c, minimum_tasks=1, attempts_per_task=50) for c in ('Definition', 'Opposites')]}
+    monkeypatch.setenv('DATABASE_URL', url)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py'), default_timeout=30).run()
+    app.switch_page('pages/3_Assess_tasks.py').run()
+    next(b for b in app.button if b.label == 'Inspect data quality').click().run()
+    assert not app.exception
+    table = next(f.value for f in app.dataframe if 'Distinct tasks' in f.value.columns)
+    assert list(table['Distinct tasks']) == [50, 50]
+    assert list(table['Required tasks']) == [1, 1]
+    assert list(table['Observed attempts per task']) == ['1', '1']
+    assert list(table['Required attempts per task']) == [50, 50]
+    assert next(m for m in app.metric if m.label == 'Task coverage').value == '100.0%'
+    assert next(m for m in app.metric if m.label == 'Tasks meeting attempt minimum').value == '0.0%'
+    class IncompleteReviewer:
+        name = 'openai-incomplete-review'
+        def review_instructions(self, blueprint):
+            return SimpleNamespace(model_dump=lambda: dict(summary='Reviewed', concerns=[]))
+        def inspect_file(self, file, blueprint):
+            raise ValueError('Semantic package review could not complete.')
+    with factory.begin() as session:
+        file_id = session.scalar(select(UploadedTaskCSV.id).where(UploadedTaskCSV.batch_id == bid))
+        jid = run_readiness(session, bid, judge=IncompleteReviewer(), file_id=file_id)
+        report = session.get(AssessmentJob, jid).summary['report']
+        assert len(report['inventory']) == 100
+        assert report['inventoried_file_ids'] == [file_id]
+        assert any(c['requirement_id'] == 'EXTRACTION' and c['status'] == 'unverified' for c in report['checks'])
 
 
 def test_structural_coverage_counts_only_selected_file_and_rejects_batch_fallback(tmp_path, monkeypatch):

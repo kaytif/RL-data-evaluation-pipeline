@@ -207,7 +207,10 @@ def render_file_coverage(factory, batch_id, blueprint, job, api_key, model, read
                     saved.insert(0, session.get(AssessmentJob, report_id))
         except (ValueError, RuntimeError) as exc:
             st.error(str(exc))
-    source = next((j.summary['report'] for j in saved if j.summary['report'].get('source_file_id') == chosen and j.summary['report'].get('llm_reviewed')), None)
+    # Prefer complete observed task metadata over older or partial model reports.
+    source = next((j.summary['report'] for j in saved
+        if j.summary['report'].get('source_file_id') == chosen
+        and chosen in j.summary['report'].get('inventoried_file_ids', [])), None)
     if source is None and job and job.summary.get('source_file_id') == chosen:
         linked = (job.summary.get('report') or {}).get('readiness_id')
         if linked:
@@ -223,6 +226,7 @@ def render_file_coverage(factory, batch_id, blueprint, job, api_key, model, read
     complete = chosen in (source or {}).get('inventoried_file_ids', [])
     checks = file_quantity_checks(blueprint, relevant, file.filename, chosen, complete=complete, ambiguous_filename=ambiguous)
     rows = coverage_rows(blueprint, relevant, complete)
+    required_rows = [r for r in rows if r['Required tasks'] > 0]
     required = sum(r['Required tasks'] for r in rows)
     found = sum(r['Distinct tasks'] for r in rows)
     covered = sum(min(r['Distinct tasks'], r['Required tasks']) for r in rows)
@@ -231,8 +235,8 @@ def render_file_coverage(factory, batch_id, blueprint, job, api_key, model, read
     cols = st.columns(3)
     cols[0].metric('Task coverage', f'{covered / required:.1%}' if required and complete else 'Unverified', border=True)
     cols[0].caption(f'{found:,} identified / {required:,} required tasks')
-    cols[1].metric('Categories meeting minimum', f'{met / len(rows):.1%}' if rows and complete else 'Unverified', border=True)
-    cols[1].caption(f'{met:,} / {len(rows):,} categories')
+    cols[1].metric('Categories meeting minimum', f'{met / len(required_rows):.1%}' if required_rows and complete else 'Unverified', border=True)
+    cols[1].caption(f'{met:,} / {len(required_rows):,} required categories')
     cols[2].metric('Tasks meeting attempt minimum', f'{attempts / found:.1%}' if found and complete else 'Unverified', border=True)
     cols[2].caption(f'{attempts:,} / {found:,} identified tasks; real execution IDs required')
     if not complete:
@@ -245,17 +249,33 @@ def render_file_coverage(factory, batch_id, blueprint, job, api_key, model, read
 
 def coverage_rows(blueprint, inventory, complete):
     """Use only the supplied file inventory; never count attempts across files."""
-    rows = []
-    for policy in blueprint.get('quantities', []):
-        tasks = {}
-        for record in inventory:
-            tasks.setdefault(record['task_key'], []).append(record)
-        matching = [items for items in tasks.values() if {r['category'] for r in items} == {policy['category']}]
+    from .evaluation_reports import category_policy
+    rows, tasks = [], {}
+    for record in inventory:
+        tasks.setdefault(record['task_key'], []).append(record)
+    def observed_category(items):
+        categories = {r['category'] for r in items}
+        return next(iter(categories)) if len(categories) == 1 else None
+    policies = list(blueprint.get('quantities', []))
+    extra = {observed_category(items) for items in tasks.values()
+             if category_policy(blueprint, observed_category(items)) is None}
+    policies += [dict(category=c or 'Unclassified', minimum_tasks=0, attempts_per_task=0)
+                 for c in sorted(extra, key=lambda c: c or '')]
+    for policy in policies:
+        matching = [items for items in tasks.values() if
+            (category_policy(blueprint, observed_category(items)) or
+             {'category': observed_category(items) or 'Unclassified'})['category'] == policy['category']]
         attempt_met = sum(all(r.get('execution_id') for r in items) and
-            len({r['execution_id'] for r in items}) >= policy['attempts_per_task'] for items in matching)
+            len({r['execution_id'] for r in items}) >= policy['attempts_per_task'] for items in matching) if policy['minimum_tasks'] else 0
+        observed_attempts = [len({('explicit', r['execution_id']) if r.get('execution_id') else
+            ('row', tuple(r['source_rows'])) for r in items}) for items in matching]
         count, minimum = len(matching), policy['minimum_tasks']
-        rows.append({'Category': policy['category'], 'Distinct tasks': count, 'Required tasks': minimum,
-            'Coverage': f'{min(count / minimum, 1):.1%}' if complete else 'Unverified',
+        rows.append({'Category': policy['category'],
+            'Observed categories': ', '.join(sorted({r['category'] or 'Unclassified' for items in matching for r in items})),
+            'Distinct tasks': count, 'Required tasks': minimum,
+            'Coverage': 'No rubric target' if not minimum else f'{min(count / minimum, 1):.1%}' if complete else 'Unverified',
+            'Observed attempts per task': (str(min(observed_attempts)) if min(observed_attempts) == max(observed_attempts)
+                else f'{min(observed_attempts)}–{max(observed_attempts)}') if observed_attempts else '0',
             'Required attempts per task': policy['attempts_per_task'],
-            'Tasks meeting attempt minimum': attempt_met, 'Threshold met': complete and count >= minimum})
+            'Tasks meeting attempt minimum': attempt_met, 'Threshold met': complete and minimum > 0 and count >= minimum})
     return rows
