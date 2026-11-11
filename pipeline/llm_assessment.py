@@ -237,7 +237,7 @@ class OpenAIJudge:
         self.model = model or os.getenv('OPENAI_MODEL', 'gpt-4.1-mini')
         if not self.model.strip():
             raise ValueError('Enter a model ID.')
-        self.name = 'openai-independent-v3:' + self.model
+        self.name = 'openai-independent-v4:' + self.model
         self.cache_root = Path(cache_root) if cache_root is not None else artifact_root() / 'llm_cache'
         self.max_calls = max_calls
         self.calls = 0
@@ -333,6 +333,50 @@ from dataset compliance and grader reliability. State limitations without invent
                                            client_requirements=blueprint), CheckSet)
         return validate_checks(result, required)
 
+    def source_column_extraction(self, rows, blueprint):
+        """Bind ordinary question/answer CSVs directly; only grading needs a model."""
+        headers = set(rows[0]['data'])
+        prompt_column = next((key for key in ('prompt', 'definition') if key in headers), None)
+        if not prompt_column or 'answer' not in headers:
+            return None
+        if headers & {'candidate_response', 'candidate_answer', 'actual_answer', 'actual_result',
+                      'actual_output', 'response', 'output'}:
+            return None
+        # Preserve the existing semantic extractor for nested or ambiguous layouts.
+        if any(not isinstance(row['data'].get(prompt_column), str) or not row['data'][prompt_column].strip()
+               or not isinstance(row['data'].get('answer'), str) for row in rows):
+            return None
+        if any(not isinstance(row['data'][key], str) for row in rows
+               for key in ('reference_answer', 'expected_answer') if row['data'].get(key)):
+            return None
+        attempts, grouped = [], {}
+        for entry in rows:
+            row, n = entry['data'], entry['source_row']
+            references = {row[key] for key in ('reference_answer', 'expected_answer') if row.get(key)}
+            if len(references) > 1:
+                raise ValueError(f'Conflicting explicit reference answers at source row {n}.')
+            category = row.get('task_type') or row.get('category') or ('definitions' if prompt_column == 'definition' else None)
+            item = ExtractedAttempt(task=row[prompt_column], candidate=row['answer'],
+                reference_answer=next(iter(references), None),
+                criteria=['Answer the source prompt correctly, accepting semantically valid alternatives.',
+                          'Satisfy any explicit response-format constraints in the source prompt.'],
+                source_rows=[n], source_task_id=row.get('task_id') or None,
+                source_attempt_id=next((row[key] for key in ('execution_id', 'attempt_id', 'run_id') if row.get(key)), None),
+                category=category)
+            attempts.append(item)
+            grouped.setdefault(item.task, []).append(item)
+        packages = []
+        for text, items in grouped.items():
+            packages.append(PackageReview(task=text, category=items[0].category,
+                source_rows=[n for item in items for n in item.source_rows],
+                checks=[Check(requirement_id=r['requirement_id'], applicable=True, status='unverified',
+                    expected=r['rule'], actual='Separate task-package compliance was not reviewed by the answer grader.',
+                    reason='Candidate correctness is graded independently; task packaging remains unverified.',
+                    suggested_fix='Review task-package evidence separately if required.')
+                    for r in requirements(blueprint, task_level=True)]))
+        return Extraction(attempts=attempts, packages=packages,
+            notes=['Prompt and candidate answer copied verbatim from source columns. No supplied reference is assumed; the LLM judges answer correctness. Separate task-package compliance remains unverified.'])
+
     def inspect_file(self, task, blueprint):
         self.audit = []
         path = Path(task.path)
@@ -355,7 +399,9 @@ from dataset compliance and grader reliability. State limitations without invent
             rows.append(dict(source_row=n, data=clean(row)))
         if not rows:
             raise ValueError('No data rows to assess.')
-        extracted = self.call(EXTRACT, dict(rows=rows,
+        extracted = self.source_column_extraction(rows, blueprint)
+        if extracted is None:
+            extracted = self.call(EXTRACT, dict(rows=rows,
             dataset_instructions=blueprint.get('required_capabilities', ''),
             permitted_categories=[q['category'] for q in blueprint.get('quantities', [])],
             task_package_requirements=requirements(blueprint, task_level=True), client_requirements=blueprint), Extraction)
@@ -425,6 +471,8 @@ from dataset compliance and grader reliability. State limitations without invent
                     check=next(r['rule'] for r in requirements(blueprint, criteria=item.criteria, category=item.category) if r['requirement_id'] == c.requirement_id),
                     expected=c.expected, actual=c.actual, status=c.status, reason=c.reason)
                     for c in judgment.checks if c.applicable]))
+            if callable(getattr(self, 'answer_progress', None)):
+                self.answer_progress(len(results), len(extracted.attempts))
         if covered != valid_rows:
             raise ValueError('LLM omitted source rows; no complete file assessment saved. Split or clarify this file.')
         return AgentFileOutput(attempts=results, mapping=dict(scoring_mode='independent_llm',

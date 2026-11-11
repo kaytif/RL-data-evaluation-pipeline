@@ -44,6 +44,51 @@ def test_independent_reward_not_gold_and_evidence(tmp_path, monkeypatch):
     assert 'jev_prediction' not in json.dumps(calls)
 
 
+@pytest.mark.parametrize('prompt_column', ['prompt', 'definition'])
+def test_plain_answers_are_graded_without_model_extraction_or_reference(tmp_path, monkeypatch, prompt_column):
+    task = task_file(tmp_path, f'{prompt_column},answer\nName the instrument used to measure temperature.,thermometer\nGive the opposite of hot.,hot\n')
+    judge = OpenAIJudge('test-key', cache_root=tmp_path / 'cache')
+    calls = []
+    def call(instructions, payload, output_type):
+        assert output_type is CheckSet, 'Simple source columns must not use model extraction.'
+        calls.append(payload)
+        item = payload['attempt']
+        assert item['reference_answer'] is None
+        status = 'pass' if item['candidate'] == 'thermometer' else 'fail'
+        return CheckSet(checks=[dict(requirement_id=r['requirement_id'], applicable=True, status=status,
+            expected='The correct instrument or an opposite word.', actual=item['candidate'],
+            reason='The instrument is correct.' if status == 'pass' else 'Repeating hot does not give its opposite.',
+            suggested_fix='') for r in payload['requirements']])
+    monkeypatch.setattr(judge, 'call', call)
+    results = judge.assess_file(task, {})
+    assert [item.score for item in results.attempts] == [1, 0]
+    assert [p['attempt']['candidate'] for p in calls] == ['thermometer', 'hot']
+    assert [item.evidence[0].source_rows for item in results.attempts] == [[2], [3]]
+
+
+def test_flat_source_reference_is_optional_and_only_read_from_explicit_column(tmp_path, monkeypatch):
+    task = task_file(tmp_path, 'prompt,answer,expected_answer\nSay hello,wrong,hello\n')
+    judge = OpenAIJudge('test-key', cache_root=tmp_path / 'cache')
+    monkeypatch.setattr(judge, 'call', lambda *args: pytest.fail('No extraction model request is needed.'))
+    _, extracted = judge.inspect_file(task, {})
+    assert extracted.attempts[0].candidate == 'wrong'
+    assert extracted.attempts[0].reference_answer == 'hello'
+
+
+def test_answer_column_is_not_assumed_candidate_when_another_response_column_exists(tmp_path, monkeypatch):
+    task = task_file(tmp_path, 'prompt,answer,candidate_response\nSay hello,hello,wrong\n')
+    judge = OpenAIJudge('test-key', cache_root=tmp_path / 'cache')
+    calls = []
+    def call(instructions, payload, output_type):
+        calls.append(output_type)
+        return extracted()
+    monkeypatch.setattr(judge, 'call', call)
+    _, output = judge.inspect_file(task, {})
+    assert calls == [Extraction]
+    assert output.attempts[0].candidate == 'wrong'
+    assert output.attempts[0].reference_answer == 'hello'
+
+
 @pytest.mark.parametrize('extraction', [extracted(rows=[99]), extracted(candidate='invented')])
 def test_reject_fabricated_source(tmp_path, monkeypatch, extraction):
     task = task_file(tmp_path, 'prompt,actual_answer,expected_answer\nSay hello,wrong,hello\n')

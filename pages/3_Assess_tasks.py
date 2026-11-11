@@ -91,6 +91,7 @@ with st.expander('Grader calibration · JSON reference examples'):
     render_calibration(factory, bid, api_key, model, ready)
 
 with st.container(border=True):
+    st.caption('Self-contained questions do not need an expected-answer column. The LLM evaluates the recorded answer against the question.')
     if st.button('Run assessment agent', type='primary', disabled=not ready, width='stretch'):
         from pipeline.llm_assessment import OpenAIJudge
         bar = st.progress(0, text='Identifying tasks and grading attempts...')
@@ -98,6 +99,8 @@ with st.container(border=True):
             bar.progress(done / total, text=f'Processed file {done:,} of {total:,} (readiness and grading phases)')
         try:
             adapter = OpenAIJudge(api_key=api_key.strip(), model=model.strip())
+            adapter.answer_progress = lambda done, total: bar.progress(done / total,
+                text=f'Graded {done:,} of {total:,} answers in this file')
             adapter.test_connection()
             with factory.begin() as session:
                 run_agent(session, bid, adapter=adapter, progress=progress, file_id=file_id)
@@ -147,8 +150,7 @@ if job.summary.get('file_errors') == job.summary.get('tasks'):
     with factory() as session:
         failed_call = session.scalar(select(AssessmentToolCall).where(AssessmentToolCall.job_id == job.id))
     if failed_call:
-        from pipeline.assessment_summary import one_line
-        st.caption(one_line(failed_call.payload.get('error')))
+        st.warning(str(failed_call.payload.get('error') or 'No supported assessment evidence was produced.'))
     st.stop()
 counts = dict(attempts=len(results), success=sum(a.result['score'] == 1 for a in results),
               failure=sum(a.result['score'] == 0 for a in results), unverified=sum(a.result['score'] is None for a in results))

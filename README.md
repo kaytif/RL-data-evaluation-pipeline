@@ -51,6 +51,8 @@ An instrument used to measure temperature.,thermometer
 
 In that example, `answer` is the candidate response being assessed, not a supplied reference answer. State that interpretation in the saved required capabilities.
 
+For a flat CSV with `prompt` and `answer`, or `definition` and `answer`, the app copies these fields directly from each source row and asks the LLM to judge the answer. An `expected_answer` or `reference_answer` column is optional; the app never invents a supplied reference. This direct answer-grading path leaves separate task-package compliance unverified rather than blocking candidate rewards. The progress indicator updates as answers are graded.
+
 | Limit | Value |
 | --- | --- |
 | LLM assessment per task file | 240 KB and 500 data rows |

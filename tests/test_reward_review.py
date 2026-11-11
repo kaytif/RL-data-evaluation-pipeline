@@ -30,6 +30,60 @@ def test_reward_rates_keep_unverified_separate_and_payload_uses_saved_results():
     assert 'unverified: 1 (25.0%)' in report
 
 
+def test_100_plain_answers_reach_grading_metrics_and_enriched_export(tmp_path, monkeypatch):
+    from pipeline.llm_assessment import OpenAIJudge
+    from pipeline.evaluation_types import CheckSet, InstructionReview
+    raw = io.StringIO(newline='')
+    writer = csv.DictWriter(raw, ['task_id', 'task_type', 'prompt', 'answer'])
+    writer.writeheader()
+    for i in range(100):
+        category = 'definitions' if i < 50 else 'opposites'
+        prompt = ('Name the instrument used to measure temperature.' if i < 50 else 'Give the opposite of hot.') + f' Item {i}.'
+        answer = ('thermometer' if i < 50 else 'cold') if i % 4 else ('telescope' if i < 50 else 'hot')
+        writer.writerow(dict(task_id=f'T-{i}', task_type=category, prompt=prompt, answer=answer))
+    data = raw.getvalue().encode()
+    url, factory, bid = setup(tmp_path, data)
+    judge = OpenAIJudge('test-key', cache_root=tmp_path / 'cache')
+    graded = []
+    def call(instructions, payload, output_type):
+        if output_type is InstructionReview:
+            return InstructionReview(summary='Review of synthetic test rubric.', concerns=[])
+        assert output_type is CheckSet, 'Flat CSV must go directly to answer grading.'
+        item = payload['attempt']
+        assert item['reference_answer'] is None
+        expected = 'cold' if 'opposite' in item['task'] else 'thermometer'
+        status = 'pass' if item['candidate'] == expected else 'fail'
+        graded.append(item['source_task_id'])
+        return CheckSet(checks=[dict(requirement_id=r['requirement_id'], applicable=True, status=status,
+            expected=expected, actual=item['candidate'], reason='Compared the answer with the task meaning.',
+            suggested_fix='') for r in payload['requirements']])
+    monkeypatch.setattr(judge, 'call', call)
+    progress = []
+    judge.answer_progress = lambda done, total: progress.append((done, total))
+    with factory.begin() as session:
+        file = session.scalar(select(UploadedTaskCSV).where(UploadedTaskCSV.batch_id == bid))
+        jid = run_agent(session, bid, judge, file_id=file.id)
+        job = session.get(AssessmentJob, jid)
+        assert job.summary['file_errors'] == 0
+        assert job.summary['attempts'] == 100
+        assert job.summary['success'] == 75 and job.summary['failure'] == 25
+        assert len(graded) == len(set(graded)) == 100
+        assert progress == [(n, 100) for n in range(1, 101)]
+        approve_dataset(session, jid, 'Synthetic test', 'Isolated test only')
+        exported = list(csv.DictReader(io.StringIO(export_scored_source_csv(session, jid, file.id).decode('utf-8-sig'))))
+        assert len(exported) == 100
+        assert sum(r['assessment_reward'] == '1' for r in exported) == 75
+        assert sum(r['assessment_reward'] == '0' for r in exported) == 25
+        for i, row in enumerate(exported):
+            assert row['task_id'] == f'T-{i}' and row['assessment_reasoning']
+    monkeypatch.setenv('DATABASE_URL', url)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py'), default_timeout=30).run()
+    app.switch_page('pages/3_Assess_tasks.py').run()
+    assert not app.exception
+    assert next(m for m in app.metric if m.label == 'Success rate (reward 1)').value == '75.0%'
+    assert next(m for m in app.metric if m.label == 'Failure rate (reward 0)').value == '25.0%'
+
+
 def test_scored_csv_preserves_original_columns_and_correctly_joins_rewards(tmp_path):
     _, factory, bid = setup(tmp_path, DATA)
     with factory.begin() as session:
